@@ -14,7 +14,8 @@ TELEGRAM_TOKEN   = "8733495512:AAHHQLMqJdgNpmWTQoofyP9JDn3Os9be1RM"
 TELEGRAM_CHAT_ID = "7883707638"
 FAL_API_KEY      = "670e2096-81b4-4d42-83f7-a05d09356c16:1b0e490a80f48e56a39b1fbefae614e8"
 
-os.environ["FAL_KEY"] = FAL_API_KEY or ""
+os.environ["FAL_KEY"] = FAL_API_KEY
+os.environ["FAL_API_KEY"] = FAL_API_KEY
 
 groq_client = Groq(api_key=GROQ_API_KEY)
 
