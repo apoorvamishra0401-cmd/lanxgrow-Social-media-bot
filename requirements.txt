@@ -1,6 +1,4 @@
 groq
 requests
-fal-client
 flask
-gspread
-google-auth
+fal-client
