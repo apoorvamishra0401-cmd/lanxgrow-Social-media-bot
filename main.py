@@ -30,7 +30,7 @@ def home():
 
 def run_web():
     port = int(os.environ.get("PORT", "10000"))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port, use_reloader=False, threaded=True)
 
 # ── Brand Memory ──────────────────────────────────────────────
 BRAND_MEMORY = {
@@ -341,5 +341,8 @@ def run_bot():
             time.sleep(5)
 
 if __name__ == "__main__":
-    threading.Thread(target=run_bot, daemon=True).start()
+    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    bot_thread.start()
+    time.sleep(1)
     run_web()
+
