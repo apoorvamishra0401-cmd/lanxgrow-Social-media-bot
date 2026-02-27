@@ -3,6 +3,8 @@ import os
 import json
 import time
 import requests
+import threading
+from flask import Flask
 from datetime import datetime
 import fal_client
 from groq import Groq
@@ -18,6 +20,17 @@ os.environ["FAL_KEY"] = FAL_API_KEY
 os.environ["FAL_API_KEY"] = FAL_API_KEY
 
 groq_client = Groq(api_key=GROQ_API_KEY)
+
+# --- Render port binding (required for Web Service) ---
+app = Flask(__name__)
+
+@app.get("/")
+def home():
+    return "OK", 200
+
+def run_web():
+    port = int(os.environ.get("PORT", "10000"))
+    app.run(host="0.0.0.0", port=port)
 
 # ── Brand Memory ──────────────────────────────────────────────
 BRAND_MEMORY = {
@@ -328,4 +341,5 @@ def run_bot():
             time.sleep(5)
 
 if __name__ == "__main__":
-    run_bot()
+    threading.Thread(target=run_bot, daemon=True).start()
+    run_web()
