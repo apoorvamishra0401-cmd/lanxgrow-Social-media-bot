@@ -111,7 +111,7 @@ def get_sheets_client():
         return client
     except Exception as e:
         print(f"Sheets auth error: {e}")
-        return None:
+        return None
     try:
         cred_json = os.environ.get("GOOGLE_SHEETS_CRED_JSON")
         if not cred_json:
