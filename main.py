@@ -8,11 +8,11 @@ import fal_client
 from groq import Groq
 
 # ── Keys (loaded from Render environment — SAFE) ──────────────
-GROQ_API_KEY     = os.environ.get("GROQ_API_KEY")
-TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-FAL_API_KEY      = os.environ.get("FAL_API_KEY")
-GEMINI_API_KEY   = os.environ.get("GEMINI_API_KEY")
+GEMINI_API_KEY   = "AIzaSyBA14PPwzDH60Rbo_ngnR7i-luoKixh2P8"
+GROQ_API_KEY     = "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"
+TELEGRAM_TOKEN   = "8733495512:AAHHQLMqJdgNpmWTQoofyP9JDn3Os9be1RM"
+TELEGRAM_CHAT_ID = "7883707638"
+FAL_API_KEY      = "670e2096-81b4-4d42-83f7-a05d09356c16:1b0e490a80f48e56a39b1fbefae614e8"
 
 os.environ["FAL_KEY"] = FAL_API_KEY or ""
 
