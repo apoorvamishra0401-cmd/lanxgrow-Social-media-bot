@@ -26,8 +26,6 @@ SHEETS_SCOPES    = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
 ]
-
-# Groq API expiry date - update this when you renew
 GROQ_EXPIRY_DATE = "2026-03-30"
 
 os.environ["FAL_KEY"] = FAL_API_KEY
@@ -35,7 +33,7 @@ os.environ["FAL_API_KEY"] = FAL_API_KEY
 
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-# ── Flask (Render port binding) ───────────────────────────────
+# ── Flask ─────────────────────────────────────────────────────
 app = Flask(__name__)
 
 @app.get("/")
@@ -46,7 +44,7 @@ def run_web():
     port = int(os.environ.get("PORT", "10000"))
     app.run(host="0.0.0.0", port=port, use_reloader=False, threaded=True)
 
-# ── Keep Alive (UptimeRobot + self-ping) ─────────────────────
+# ── Keep Alive ────────────────────────────────────────────────
 def keep_alive():
     while True:
         try:
@@ -95,32 +93,17 @@ Never be generic. Always be sharp, data-driven, emotionally resonant.
 Focus only on educational content for English communication skills.
 """
 
-# ── Google Sheets Client ──────────────────────────────────────
+# ── Google Sheets Client (FIXED - single clean version) ──────
 def get_sheets_client():
     try:
         secret_path = "/etc/secrets/google_service_account.json"
         if not os.path.exists(secret_path):
             print("⚠️ Google Sheets secret file not found:", secret_path)
             return None
-
         with open(secret_path, "r") as f:
             info = json.load(f)
-
         creds = Credentials.from_service_account_info(info, scopes=SHEETS_SCOPES)
-        client = gspread.authorize(creds)
-        return client
-    except Exception as e:
-        print(f"Sheets auth error: {e}")
-        return None
-    try:
-        cred_json = os.environ.get("GOOGLE_SHEETS_CRED_JSON")
-        if not cred_json:
-            print("⚠️ No Google Sheets credentials in environment.")
-            return None
-        info = json.loads(cred_json)
-        creds = Credentials.from_service_account_info(info, scopes=SHEETS_SCOPES)
-        client = gspread.authorize(creds)
-        return client
+        return gspread.authorize(creds)
     except Exception as e:
         print(f"Sheets auth error: {e}")
         return None
@@ -133,26 +116,26 @@ def log_post_to_sheet(post_data):
             return
         sheet = client.open(SHEET_NAME).worksheet("Posts")
         row = [
-            post_data.get("timestamp", ""),           # A
-            post_data.get("topic", ""),                # B
-            post_data.get("post_content", ""),         # C
-            post_data.get("quality_score", ""),        # D
-            post_data.get("rating", "UNRATED"),        # E
-            post_data.get("hook_type_used", ""),       # F
-            post_data.get("engagement_prediction", ""),# G
-            post_data.get("research_sources", ""),     # H
-            post_data.get("research_content_types",""),# I
-            post_data.get("research_quantity", ""),    # J
-            post_data.get("what_bot_learned", ""),     # K
-            post_data.get("improvement_applied", ""),  # L
-            post_data.get("image_prompt", ""),         # M
-            post_data.get("video_prompt", ""),         # N
-            post_data.get("seo_keywords", ""),         # O
-            post_data.get("trending_topic", ""),       # P
-            post_data.get("competitor_pattern", ""),   # Q
-            post_data.get("image_url", ""),            # R
-            post_data.get("video_url", ""),            # S
-            post_data.get("command_used", ""),         # T
+            post_data.get("timestamp", ""),            # A - Timestamp
+            post_data.get("topic", ""),                 # B - Topic
+            post_data.get("post_content", ""),          # C - Post Content
+            post_data.get("quality_score", ""),         # D - Quality Score
+            post_data.get("rating", "UNRATED"),         # E - Rating
+            post_data.get("hook_type_used", ""),        # F - Hook Type Used
+            post_data.get("engagement_prediction", ""), # G - Engagement Prediction
+            post_data.get("research_sources", ""),      # H - Research Sources
+            post_data.get("research_content_types", ""),# I - Research Content Types
+            post_data.get("research_quantity", ""),     # J - Research Quantity
+            post_data.get("what_bot_learned", ""),      # K - What Bot Learned
+            post_data.get("improvement_applied", ""),   # L - Improvement Applied
+            post_data.get("image_prompt", ""),          # M - Image Prompt
+            post_data.get("video_prompt", ""),          # N - Video Prompt
+            post_data.get("seo_keywords", ""),          # O - SEO Keywords
+            post_data.get("trending_topic", ""),        # P - Trending Topic
+            post_data.get("competitor_pattern", ""),    # Q - Competitor Pattern
+            post_data.get("image_url", ""),             # R - Image URL
+            post_data.get("video_url", ""),             # S - Video URL
+            post_data.get("command_used", ""),          # T - Command Used
         ]
         sheet.append_row(row, value_input_option="RAW")
         print("✅ Post logged to Sheets")
@@ -166,11 +149,11 @@ def update_rating_in_sheet(topic, rating):
         if not client:
             return
         sheet = client.open(SHEET_NAME).worksheet("Posts")
-        col_b = sheet.col_values(2)  # Topic column
+        col_b = sheet.col_values(2)
         for i, val in enumerate(col_b):
             if val == topic:
-                sheet.update_cell(i + 1, 5, rating)  # Column E = Rating
-                print(f"✅ Rating updated in Sheets: {rating}")
+                sheet.update_cell(i + 1, 5, rating)
+                print(f"✅ Rating updated: {rating}")
                 break
     except Exception as e:
         print(f"Sheets rating update error: {e}")
@@ -204,8 +187,8 @@ def read_feedback_for_learning():
         new_feedback = [r for r in all_rows if r.get("Status") == "New"]
         if not new_feedback:
             return ""
+        # FIXED: real newline join
         feedback_text = "\n".join([r.get("Feedback Text", "") for r in new_feedback])
-        # Mark as Read
         for i, row in enumerate(all_rows):
             if row.get("Status") == "New":
                 sheet.update_cell(i + 2, 3, "Read")
@@ -214,7 +197,7 @@ def read_feedback_for_learning():
         print(f"Feedback read error: {e}")
         return ""
 
-# ── Log API Expiry to Sheet ───────────────────────────────────
+# ── Update API Expiry Sheet ───────────────────────────────────
 def update_api_expiry_sheet():
     try:
         client = get_sheets_client()
@@ -239,8 +222,7 @@ def check_api_expiry():
         expiry = date.fromisoformat(GROQ_EXPIRY_DATE)
         days_left = (expiry - today).days
         update_api_expiry_sheet()
-
-        # Remind if 10 days or less remaining, Mon/Wed/Fri only
+        # Remind 10 days before on Mon/Wed/Fri
         if days_left <= 10 and today.weekday() in [0, 2, 4]:
             send_telegram(
                 f"⚠️ *API Expiry Reminder*\n\n"
@@ -257,7 +239,11 @@ def check_api_expiry():
 def send_telegram(text):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": text,
+            "parse_mode": "Markdown"
+        }
         requests.post(url, json=payload, timeout=10)
     except Exception as e:
         print(f"Telegram error: {e}")
@@ -303,7 +289,7 @@ REASON: [One line why]
 
 # ── Research Helper ───────────────────────────────────────────
 def research_topic(topic):
-    research = ask_groq(f"""
+    return ask_groq(f"""
 You are researching for a LanXgrow social media post about: {topic}
 
 Do the following:
@@ -327,9 +313,8 @@ HOOK_TYPE: [Question/3 Mistakes/Before-After/Shocking Stat]
 ENGAGEMENT_PREDICTION: [High/Medium/Low]
 WHAT_LEARNED: [2-line summary]
 """)
-    return research
 
-# ── Parse Research Output ─────────────────────────────────────
+# ── Parse Research Output (FIXED: real newline) ───────────────
 def parse_research(research_text):
     result = {}
     for line in research_text.split('\n'):
@@ -344,11 +329,9 @@ def generate_best_post(topic, command_used="/post"):
 
     send_telegram(f"🔍 Researching: *{topic}*")
 
-    # Step 1: Research
     research_raw = research_topic(topic)
     research = parse_research(research_raw)
 
-    # Step 2: Read feedback for improvement
     feedback = read_feedback_for_learning()
     feedback_context = f"\n\nApply this user feedback to improve the post:\n{feedback}" if feedback else ""
 
@@ -384,7 +367,7 @@ Rules:
         quality = quality_check(draft)
         print(f"Attempt {attempt}:\n{quality}\n")
 
-        # ✅ FIXED: was \\n before
+        # FIXED: real newline split for score extraction
         try:
             score_line = [l for l in quality.split('\n') if 'SCORE:' in l][0]
             score = float(score_line.split(':')[1].strip().split('/')[0])
@@ -398,7 +381,6 @@ Rules:
         if score >= 9.0:
             break
 
-    # Generate image + video prompts
     image_prompt = ask_groq(f"Describe ONE powerful visual image (one line only) for this post: {best_post[:200]}")
     video_prompt = ask_groq(f"Describe ONE 15-second video concept (one line only) for this post: {best_post[:200]}")
 
@@ -414,7 +396,6 @@ Rules:
         "command_used": command_used
     }
 
-    # Log to Google Sheets
     log_post_to_sheet({
         "timestamp": LAST_POST["timestamp"],
         "topic": topic,
@@ -440,10 +421,9 @@ Rules:
 
     return best_post, best_score, quality
 
-# ── Generate Image (Gemini) ───────────────────────────────────
+# ── Generate Image (Gemini) FIXED model name ─────────────────
 def generate_image(prompt):
     try:
-        # ✅ FIXED: model name corrected
         response = requests.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={GEMINI_API_KEY}",
             headers={"Content-Type": "application/json"},
@@ -460,8 +440,7 @@ def generate_image(prompt):
             parts = result["candidates"][0]["content"]["parts"]
             for part in parts:
                 if "inline_data" in part:
-                    image_bytes = base64.b64decode(part["inline_data"]["data"])
-                    return image_bytes
+                    return base64.b64decode(part["inline_data"]["data"])
         return None
     except Exception as e:
         print(f"Gemini image error: {e}")
@@ -539,14 +518,23 @@ def morning_report():
     ]
     topic = random.choice(topics)
 
-    send_telegram(f"🌅 *Good Morning Apoorva!*\n\n📅 Date: {today}\n🔍 Today's Topic: _{topic}_\n\n⏳ Researching + generating your content package...")
+    send_telegram(
+        f"🌅 *Good Morning Apoorva!*\n\n"
+        f"📅 Date: {today}\n"
+        f"🔍 Today's Topic: _{topic}_\n\n"
+        f"⏳ Researching + generating your content package..."
+    )
 
     post, score, quality_report = generate_best_post(topic, command_used="/morning")
 
     send_telegram("🎨 Generating image...")
     image_data = generate_image(LAST_POST.get("image_prompt", topic))
 
-    send_telegram(f"📦 *Today's Content Package*\n\n📊 *Quality Score: {score}/10*\n✅ *POST (Ready to Copy):*\n\n{post}")
+    send_telegram(
+        f"📦 *Today's Content Package*\n\n"
+        f"📊 *Quality Score: {score}/10*\n"
+        f"✅ *POST (Ready to Copy):*\n\n{post}"
+    )
 
     if image_data:
         send_image_telegram(image_data, "🖼 Image for today's post")
@@ -582,6 +570,7 @@ def handle_message(text):
             "`/like` — Mark last post as LIKED ✅\n"
             "`/dislike` — Mark last post as DISLIKED ⚠️\n"
             "`/feedback [text]` — Give feedback to improve bot 💡\n"
+            "`/sheettest` — Test Google Sheets connection\n"
             "`/analytics` — See learning report\n"
             "`/help` — All commands"
         )
@@ -618,7 +607,12 @@ def handle_message(text):
 
     elif text_lower == "/like":
         if LAST_POST:
-            send_telegram(f"✅ *Liked!*\nTopic: {LAST_POST['topic']}\nScore: {LAST_POST['score']}/10\nSaved to analytics + Sheet!")
+            send_telegram(
+                f"✅ *Liked!*\n"
+                f"Topic: {LAST_POST['topic']}\n"
+                f"Score: {LAST_POST['score']}/10\n"
+                f"Saved to analytics + Sheet!"
+            )
             analytics = load_analytics()
             entry = dict(LAST_POST)
             entry['rating'] = 'LIKE'
@@ -630,7 +624,12 @@ def handle_message(text):
 
     elif text_lower == "/dislike":
         if LAST_POST:
-            send_telegram(f"⚠️ *Disliked!*\nTopic: {LAST_POST['topic']}\nScore: {LAST_POST['score']}/10\nSaved. I'll improve!")
+            send_telegram(
+                f"⚠️ *Disliked!*\n"
+                f"Topic: {LAST_POST['topic']}\n"
+                f"Score: {LAST_POST['score']}/10\n"
+                f"Saved. I'll improve next time!"
+            )
             analytics = load_analytics()
             entry = dict(LAST_POST)
             entry['rating'] = 'DISLIKE'
@@ -645,9 +644,35 @@ def handle_message(text):
         if len(parts) > 1:
             feedback_text = parts[1]
             log_feedback_to_sheet(feedback_text)
-            send_telegram(f"💡 *Feedback saved!*\n\n_{feedback_text}_\n\nI'll apply this to future posts. Thank you Apoorva! 🙏")
+            send_telegram(
+                f"💡 *Feedback saved!*\n\n"
+                f"_{feedback_text}_\n\n"
+                f"I'll apply this to future posts. Thank you Apoorva! 🙏"
+            )
         else:
-            send_telegram("❌ Please add your feedback text.\nExample: `/feedback Use more emotional hooks`")
+            send_telegram(
+                "❌ Please add your feedback.\n"
+                "Example: `/feedback Use more emotional hooks`"
+            )
+
+    elif text_lower == "/sheettest":
+        try:
+            client = get_sheets_client()
+            if not client:
+                send_telegram(
+                    "❌ Sheets client is None.\n"
+                    "Secret file missing or auth failed.\n"
+                    "Check Render → Environment → Secret Files."
+                )
+                return
+            ws = client.open(SHEET_NAME).worksheet("Posts")
+            ws.append_row(
+                [datetime.now().strftime("%Y-%m-%d %H:%M"), "SHEETTEST", "OK"],
+                value_input_option="RAW"
+            )
+            send_telegram("✅ Sheet test passed! Check Posts tab for a new row.")
+        except Exception as e:
+            send_telegram(f"❌ Sheet test failed:\n`{e}`")
 
     elif text_lower == "/analytics":
         analytics = load_analytics()
@@ -658,7 +683,8 @@ def handle_message(text):
                 rating = a.get('rating', 'UNRATED')
                 score = a.get('score', 0)
                 topic = a.get('topic', 'Unknown')[:40]
-                lines.append(f"{'✅' if rating == 'LIKE' else '⚠️' if rating == 'DISLIKE' else '—'} {topic} | Score: {score}/10")
+                emoji = '✅' if rating == 'LIKE' else '⚠️' if rating == 'DISLIKE' else '—'
+                lines.append(f"{emoji} {topic} | Score: {score}/10")
             report = "\n".join(lines)
             send_telegram(f"📊 *Last {len(last7)} Posts:*\n\n{report}")
         else:
@@ -682,7 +708,11 @@ def get_updates(offset=None):
 # ── Main Bot Loop ─────────────────────────────────────────────
 def run_bot():
     print("🤖 LanXgrow AI Agent LIVE!")
-    send_telegram("🟢 *LanXgrow AI Agent is LIVE!*\n\nType `/morning` to get today's content package or `/help` for all commands.")
+    send_telegram(
+        "🟢 *LanXgrow AI Agent is LIVE!*\n\n"
+        "Type `/morning` to get today's content package\n"
+        "or `/help` for all commands."
+    )
 
     offset = None
     last_morning_report = None
@@ -690,16 +720,16 @@ def run_bot():
 
     while True:
         try:
-            now = datetime.utcnow()
+            now = datetime.now()
             today = now.strftime("%Y-%m-%d")
 
-            # Auto morning report at 8 AM IST (2:30 AM UTC)
-            if now.hour == 2 and now.minute < 5 and last_morning_report != today:
+            # Auto morning report at 8 AM IST
+            if now.hour == 8 and now.minute < 5 and last_morning_report != today:
                 morning_report()
                 last_morning_report = today
 
-            # Daily expiry check at 9 AM IST (3:30 AM UTC)
-            if now.hour == 3 and now.minute < 5 and last_expiry_check != today:
+            # Daily expiry check at 9 AM IST
+            if now.hour == 9 and now.minute < 5 and last_expiry_check != today:
                 check_api_expiry()
                 last_expiry_check = today
 
