@@ -2,26 +2,29 @@
 import os
 import json
 import time
+import base64
+import random
 import requests
 import threading
 from flask import Flask
 from datetime import datetime
-import fal_client
 from groq import Groq
+import fal_client
 
-# ── Keys (loaded from Render environment — SAFE) ──────────────
+# ── Keys ──────────────────────────────────────────────────────
 GEMINI_API_KEY   = "AIzaSyBA14PPwzDH60Rbo_ngnR7i-luoKixh2P8"
 GROQ_API_KEY     = "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"
 TELEGRAM_TOKEN   = "8733495512:AAHHQLMqJdgNpmWTQoofyP9JDn3Os9be1RM"
 TELEGRAM_CHAT_ID = "7883707638"
 FAL_API_KEY      = "670e2096-81b4-4d42-83f7-a05d09356c16:1b0e490a80f48e56a39b1fbefae614e8"
+JSON2VIDEO_KEY   = "PdatZmLXSTdgeUQFfc9GYfuAsoGiDYO8cB2tG4Ax"
 
 os.environ["FAL_KEY"] = FAL_API_KEY
 os.environ["FAL_API_KEY"] = FAL_API_KEY
 
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-# --- Render port binding (required for Web Service) ---
+# ── Flask (Render port binding) ───────────────────────────────
 app = Flask(__name__)
 
 @app.get("/")
@@ -31,6 +34,9 @@ def home():
 def run_web():
     port = int(os.environ.get("PORT", "10000"))
     app.run(host="0.0.0.0", port=port, use_reloader=False, threaded=True)
+
+# ── Global State ──────────────────────────────────────────────
+LAST_POST = None
 
 # ── Brand Memory ──────────────────────────────────────────────
 BRAND_MEMORY = {
@@ -88,7 +94,7 @@ def ask_groq(prompt):
     except Exception as e:
         return f"Error: {e}"
 
-# ── Quality Checker (Self-Verify) ─────────────────────────────
+# ── Quality Checker ───────────────────────────────────────────
 def quality_check(post_text):
     score_prompt = f"""
 Score this social media post strictly (1-10) for LanXgrow:
@@ -115,9 +121,11 @@ REASON: [One line why]
 
 # ── Generate Post (3 attempts, best wins) ────────────────────
 def generate_best_post(topic):
+    global LAST_POST
     send_telegram(f"🔍 Researching + drafting post on: *{topic}*")
     best_post = None
     best_score = 0
+    quality = ""
 
     for attempt in range(1, 4):
         draft = ask_groq(f"""
@@ -139,7 +147,6 @@ Make it sharp, emotional, real. Not generic.
         quality = quality_check(draft)
         print(f"Attempt {attempt}:\n{quality}\n")
 
-        # Extract score
         try:
             score_line = [l for l in quality.split('\n') if 'SCORE:' in l][0]
             score = float(score_line.split(':')[1].strip().split('/')[0])
@@ -153,44 +160,98 @@ Make it sharp, emotional, real. Not generic.
         if score >= 9.0:
             break
 
+    LAST_POST = {
+        "topic": topic,
+        "post": best_post,
+        "score": best_score,
+        "quality": quality,
+        "timestamp": datetime.now().isoformat()
+    }
+
     return best_post, best_score, quality
 
-# ── Generate Image via Fal.ai ─────────────────────────────────
+# ── Generate Image (Gemini) ───────────────────────────────────
 def generate_image(prompt):
     try:
-        result = fal_client.subscribe(
-            "fal-ai/flux/dev",
-            arguments={
-                "prompt": f"Professional, high-quality: {prompt}. Indian context, vibrant, modern.",
-                "image_size": "landscape_4_3",
-                "num_inference_steps": 28,
-                "num_images": 1
-            }
+        response = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key={GEMINI_API_KEY}",
+            headers={"Content-Type": "application/json"},
+            json={
+                "contents": [{
+                    "parts": [{"text": f"Professional Instagram thumbnail for English learning in India: {prompt}. Vibrant, modern, 16:9."}]
+                }]
+            },
+            timeout=45
         )
-        return result["images"][0]["url"]
+        result = response.json()
+        if "candidates" in result:
+            parts = result["candidates"][0]["content"]["parts"]
+            for part in parts:
+                if "inline_data" in part:
+                    image_bytes = base64.b64decode(part["inline_data"]["data"])
+                    return image_bytes  # raw bytes
+        return None
     except Exception as e:
-        return f"Image error: {e}"
+        print(f"Gemini image error: {e}")
+        return None
+
+# ── Generate Video (JSON2Video) ───────────────────────────────
+def generate_video(prompt):
+    try:
+        response = requests.post(
+            "https://api.json2video.com/v2/videos",
+            headers={
+                "Authorization": f"Bearer {JSON2VIDEO_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "project": "default",
+                "duration": 15,
+                "elements": [{
+                    "type": "text",
+                    "text": f"LanXgrow: {prompt}",
+                    "duration": 15,
+                    "style": {
+                        "font_size": 48,
+                        "color": "#ffffff",
+                        "background": "#1e3a8a"
+                    }
+                }]
+            },
+            timeout=90
+        )
+        result = response.json()
+        return result.get("url", "⏳ Video processing... check in 2 min")
+    except Exception as e:
+        return f"Video error: {e}"
 
 # ── Send Image to Telegram ────────────────────────────────────
-def send_image_telegram(image_url, caption=""):
+def send_image_telegram(image_data, caption=""):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
-        data = {"chat_id": TELEGRAM_CHAT_ID, "photo": image_url, "caption": caption}
-        requests.post(url, json=data, timeout=30)
+        if isinstance(image_data, bytes):
+            files = {"photo": ("image.jpg", image_data, "image/jpeg")}
+            data = {"chat_id": TELEGRAM_CHAT_ID, "caption": caption}
+            requests.post(url, files=files, data=data, timeout=30)
+        else:
+            data = {"chat_id": TELEGRAM_CHAT_ID, "photo": image_data, "caption": caption}
+            requests.post(url, json=data, timeout=30)
     except Exception as e:
         send_telegram(f"Image send error: {e}")
 
-# ── Load Analytics Memory ─────────────────────────────────────
+# ── Load Analytics ────────────────────────────────────────────
 def load_analytics():
     try:
         if os.path.exists("analytics.json"):
             with open("analytics.json", "r") as f:
-                return json.load(f)
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
     except:
         pass
-    return {}
+    return []
 
-# ── Save Analytics Memory ─────────────────────────────────────
+# ── Save Analytics ────────────────────────────────────────────
 def save_analytics(data):
     try:
         with open("analytics.json", "w") as f:
@@ -200,7 +261,6 @@ def save_analytics(data):
 
 # ── Morning Report ────────────────────────────────────────────
 def morning_report():
-    analytics = load_analytics()
     today = datetime.now().strftime("%Y-%m-%d")
 
     topics = [
@@ -209,20 +269,16 @@ def morning_report():
         "How LanXgrow transforms communication skills in 7 days"
     ]
 
-    import random
     topic = random.choice(topics)
 
     send_telegram(f"🌅 *Good Morning Apoorva!*\n\n📅 Date: {today}\n🔍 Today's Topic: _{topic}_\n\n⏳ Generating your content package...")
 
-    # Generate post
     post, score, quality_report = generate_best_post(topic)
 
-    # Generate image
     send_telegram("🎨 Generating image...")
     image_prompt = ask_groq(f"Describe a powerful visual image for this post (one line): {post[:200]}")
-    image_url = generate_image(image_prompt)
+    image_data = generate_image(image_prompt)
 
-    # Send full package
     send_telegram(f"""
 📦 *Today's Content Package*
 
@@ -232,24 +288,27 @@ def morning_report():
 {post}
 """)
 
-    if "http" in str(image_url):
-        send_image_telegram(image_url, f"🖼 Image for today's post")
+    if image_data:
+        send_image_telegram(image_data, "🖼 Image for today's post")
+    else:
+        send_telegram("⚠️ Image generation failed. Try /image manually.")
 
     send_telegram(f"""
 📋 *Quality Report:*
 {quality_report}
 
-👉 *Your Action:*
-1. Copy post above
-2. Post to Instagram + LinkedIn
-3. Reply with today's likes/comments for learning
+👉 *Your Actions:*
+1. Copy post above → Instagram + LinkedIn
+2. `/like` if post is good
+3. `/dislike` if post needs rework
+4. `/video [topic]` to generate a video
 """)
 
-# ── Handle Telegram Commands ──────────────────────────────────
+# ── Handle Commands ───────────────────────────────────────────
 def handle_message(text):
-    text = text.strip().lower()
+    text_lower = text.strip().lower()
 
-    if text == "/start" or text == "/help":
+    if text_lower in ["/start", "/help"]:
         send_telegram("""
 👋 *LanXgrow AI Agent*
 
@@ -257,36 +316,75 @@ Commands:
 `/morning` — Get today's content package
 `/post [topic]` — Generate post on custom topic
 `/image [prompt]` — Generate image
+`/video [prompt]` — Generate 15s video
+`/like` — Mark last post as LIKED ✅
+`/dislike` — Mark last post as DISLIKED ⚠️
 `/analytics` — See learning report
 `/help` — All commands
 """)
 
-    elif text == "/morning":
+    elif text_lower == "/morning":
         morning_report()
 
-    elif text.startswith("/post"):
+    elif text_lower.startswith("/post"):
         parts = text.split(" ", 1)
         topic = parts[1] if len(parts) > 1 else "English communication skills India"
         post, score, quality = generate_best_post(topic)
         send_telegram(f"📝 *Post (Score: {score}/10):*\n\n{post}")
 
-    elif text.startswith("/image"):
+    elif text_lower.startswith("/image"):
         parts = text.split(" ", 1)
         prompt = parts[1] if len(parts) > 1 else "Indian student speaking confidently"
         send_telegram("🎨 Generating image...")
-        url = generate_image(prompt)
-        if "http" in str(url):
-            send_image_telegram(url, f"🖼 {prompt}")
+        image_data = generate_image(prompt)
+        if image_data:
+            send_image_telegram(image_data, f"🖼 {prompt}")
         else:
-            send_telegram(url)
+            send_telegram("❌ Image generation failed. Try again.")
 
-    elif text == "/analytics":
+    elif text_lower.startswith("/video"):
+        parts = text.split(" ", 1)
+        prompt = parts[1] if len(parts) > 1 else "English learning India"
+        send_telegram(f"🎬 Generating video: _{prompt}_\n⏳ Takes ~2 minutes...")
+        video_url = generate_video(prompt)
+        send_telegram(f"📹 *Your Video:*\n{video_url}")
+
+    elif text_lower == "/like":
+        if LAST_POST:
+            send_telegram(f"✅ *Liked!*\nTopic: {LAST_POST['topic']}\nScore: {LAST_POST['score']}/10\nSaved to analytics!")
+            analytics = load_analytics()
+            entry = dict(LAST_POST)
+            entry['rating'] = 'LIKE'
+            analytics.append(entry)
+            save_analytics(analytics)
+        else:
+            send_telegram("❌ No post to rate yet. Use `/morning` or `/post` first.")
+
+    elif text_lower == "/dislike":
+        if LAST_POST:
+            send_telegram(f"⚠️ *Disliked!*\nTopic: {LAST_POST['topic']}\nScore: {LAST_POST['score']}/10\nSaved. I'll improve!")
+            analytics = load_analytics()
+            entry = dict(LAST_POST)
+            entry['rating'] = 'DISLIKE'
+            analytics.append(entry)
+            save_analytics(analytics)
+        else:
+            send_telegram("❌ No post to rate yet. Use `/morning` or `/post` first.")
+
+    elif text_lower == "/analytics":
         analytics = load_analytics()
         if analytics:
-            report = "\n".join([f"📅 {k}: {v}" for k, v in list(analytics.items())[-7:]])
-            send_telegram(f"📊 *Last 7 Days Analytics:*\n\n{report}")
+            last7 = analytics[-7:]
+            lines = []
+            for a in last7:
+                rating = a.get('rating', 'UNRATED')
+                score = a.get('score', 0)
+                topic = a.get('topic', 'Unknown')[:40]
+                lines.append(f"{'✅' if rating == 'LIKE' else '⚠️' if rating == 'DISLIKE' else '—'} {topic} | Score: {score}/10")
+            report = "\n".join(lines)
+            send_telegram(f"📊 *Last {len(last7)} Posts:*\n\n{report}")
         else:
-            send_telegram("📊 No analytics yet. Post content and reply with likes/comments!")
+            send_telegram("📊 No analytics yet. Generate posts and rate them!")
 
     else:
         reply = ask_groq(text)
@@ -303,7 +401,7 @@ def get_updates(offset=None):
         print(f"Update error: {e}")
         return {}
 
-# ── Main Loop ─────────────────────────────────────────────────
+# ── Main Bot Loop ─────────────────────────────────────────────
 def run_bot():
     print("🤖 LanXgrow AI Agent LIVE!")
     send_telegram("🟢 *LanXgrow AI Agent is LIVE!*\n\nType `/morning` to get today's content package or `/help` for all commands.")
@@ -313,14 +411,12 @@ def run_bot():
 
     while True:
         try:
-            # Auto morning report at 8 AM IST (2:30 AM UTC)
             now = datetime.utcnow()
             today = now.strftime("%Y-%m-%d")
             if now.hour == 2 and now.minute < 5 and last_morning_report != today:
                 morning_report()
                 last_morning_report = today
 
-            # Check Telegram messages
             updates = get_updates(offset)
             if "result" in updates:
                 for update in updates["result"]:
@@ -340,9 +436,9 @@ def run_bot():
             print(f"Loop error: {e}")
             time.sleep(5)
 
+# ── Entry Point ───────────────────────────────────────────────
 if __name__ == "__main__":
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
     time.sleep(1)
     run_web()
-
