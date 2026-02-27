@@ -1,1 +1,4 @@
+groq
+requests
+fal-client
 flask
