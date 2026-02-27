@@ -98,6 +98,21 @@ Focus only on educational content for English communication skills.
 # ── Google Sheets Client ──────────────────────────────────────
 def get_sheets_client():
     try:
+        secret_path = "/etc/secrets/google_service_account.json"
+        if not os.path.exists(secret_path):
+            print("⚠️ Google Sheets secret file not found:", secret_path)
+            return None
+
+        with open(secret_path, "r") as f:
+            info = json.load(f)
+
+        creds = Credentials.from_service_account_info(info, scopes=SHEETS_SCOPES)
+        client = gspread.authorize(creds)
+        return client
+    except Exception as e:
+        print(f"Sheets auth error: {e}")
+        return None:
+    try:
         cred_json = os.environ.get("GOOGLE_SHEETS_CRED_JSON")
         if not cred_json:
             print("⚠️ No Google Sheets credentials in environment.")
