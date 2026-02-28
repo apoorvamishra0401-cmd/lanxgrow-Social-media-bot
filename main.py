@@ -1,4 +1,3 @@
-# Render redeploy fix - Feb 28 2026
 import os
 import json
 import time
@@ -11,13 +10,13 @@ from datetime import datetime
 from groq import Groq
 import fal_client
 
-# ── Keys ──────────────────────────────────────────────────────
-GEMINI_API_KEY   = "AIzaSyBA14PPwzDH60Rbo_ngnR7i-luoKixh2P8"
+# ──_keys──────────────────────────────────────────────────────
+GEMINI_API_KEY   = "AIzaSyBA14PPwzDH60Rbo_ngnR7i-luoKixh2P8"  # Not used anymore
 GROQ_API_KEY     = "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"
 TELEGRAM_TOKEN   = "8733495512:AAHHQLMqJdgNpmWTQoofyP9JDn3Os9be1RM"
 TELEGRAM_CHAT_ID = "7883707638"
 FAL_API_KEY      = "670e2096-81b4-4d42-83f7-a05d09356c16:1b0e490a80f48e56a39b1fbefae614e8"
-JSON2VIDEO_KEY   = "PdatZmLXSTdgeUQFfc9GYfuAsoGiDYO8cB2tG4Ax"
+JSON2VIDEO_KEY   = "PdatZmLXSTdgeUQFfc9GYfuAsoGiDYO8cB2tG4Ax"  # We now use FAL for video too
 RENDER_URL       = "https://lanxgrow-social-media-bot.onrender.com/"
 
 os.environ["FAL_KEY"] = FAL_API_KEY
@@ -158,7 +157,6 @@ Make it sharp, emotional, real. Not generic.
         quality = quality_check(draft)
         print(f"Attempt {attempt}:\n{quality}\n")
 
-        # ✅ FIXED: was \\n before (bug)
         try:
             score_line = [l for l in quality.split('\n') if 'SCORE:' in l][0]
             score = float(score_line.split(':')[1].strip().split('/')[0])
@@ -182,60 +180,53 @@ Make it sharp, emotional, real. Not generic.
 
     return best_post, best_score, quality
 
-# ── Generate Image (Gemini) ───────────────────────────────────
+# ── Generate Image using FAL.AI (FIXED) ───────────────────────
 def generate_image(prompt):
     try:
-        response = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={GEMINI_API_KEY}",
-            headers={"Content-Type": "application/json"},
-            json={
-                "contents": [{
-                    "parts": [{"text": f"Professional Instagram thumbnail for English learning in India: {prompt}. Vibrant, modern, 16:9."}]
-                }],
-                "generationConfig": {"responseModalities": ["image", "text"]}
+        print(f"🖼 Generating image with prompt: {prompt[:60]}...")
+        result = fal_client.subscribe(
+            "fal-ai/flux/dev",
+            arguments={
+                "prompt": f"Professional Instagram thumbnail for English learning in India: {prompt}. Vibrant, modern, 16:9, realistic, high detail, Indian students, classroom or urban setting.",
+                "num_inference_steps": 30,
+                "guidance_scale": 3.5,
+                "image_size": "square"
             },
-            timeout=45
+            with_logs=True,
         )
-        result = response.json()
-        if "candidates" in result:
-            parts = result["candidates"][0]["content"]["parts"]
-            for part in parts:
-                if "inline_data" in part:
-                    image_bytes = base64.b64decode(part["inline_data"]["data"])
-                    return image_bytes
+        if 'images' in result and len(result['images']) > 0:
+            image_url = result['images'][0]['url']
+            image_response = requests.get(image_url, timeout=30)
+            if image_response.status_code == 200:
+                return image_response.content
+        print("❌ FAL image generation failed: no image returned")
         return None
     except Exception as e:
-        print(f"Gemini image error: {e}")
+        print(f"FAL image error: {e}")
         return None
 
-# ── Generate Video (JSON2Video) ───────────────────────────────
+# ── Generate Video using FAL.AI (FIXED) ───────────────────────
 def generate_video(prompt):
     try:
-        response = requests.post(
-            "https://api.json2video.com/v2/videos",
-            headers={
-                "Authorization": f"Bearer {JSON2VIDEO_KEY}",
-                "Content-Type": "application/json"
+        print(f"🎬 Generating video with prompt: {prompt[:60]}...")
+        result = fal_client.subscribe(
+            "fal-ai/fast-lightning-svd",
+            arguments={
+                "prompt": f"English learning for Indian students: {prompt}. Style: dynamic, YouTube short, 15 seconds, text overlay: 'LanXgrow - Speak Confidently'. Background: vibrant Indian classroom or city street.",
+                "image_size": "1080x1920",
+                "num_inference_steps": 25,
+                "audio": False,
+                "fps": 15
             },
-            json={
-                "project": "default",
-                "duration": 15,
-                "elements": [{
-                    "type": "text",
-                    "text": f"LanXgrow: {prompt}",
-                    "duration": 15,
-                    "style": {
-                        "font_size": 48,
-                        "color": "#ffffff",
-                        "background": "#1e3a8a"
-                    }
-                }]
-            },
-            timeout=90
+            with_logs=True,
         )
-        result = response.json()
-        return result.get("url", "⏳ Video processing... check in 2 min")
+        if 'videos' in result and len(result['videos']) > 0:
+            video_url = result['videos'][0]['url']
+            return video_url
+        print("❌ FAL video generation failed: no video returned")
+        return "⏳ Video processing failed. Try again."
     except Exception as e:
+        print(f"FAL video error: {e}")
         return f"Video error: {e}"
 
 # ── Send Image to Telegram ────────────────────────────────────
@@ -328,7 +319,7 @@ def handle_message(text):
     elif text_lower.startswith("/video"):
         parts = text.split(" ", 1)
         prompt = parts[1] if len(parts) > 1 else "English learning India"
-        send_telegram(f"🎬 Generating video: _{prompt}_\n⏳ Takes ~2 minutes...")
+        send_telegram(f"🎬 Generating video: _{prompt}_\n⏳ Takes ~1-2 minutes...")
         video_url = generate_video(prompt)
         send_telegram(f"📹 *Your Video:*\n{video_url}")
 
