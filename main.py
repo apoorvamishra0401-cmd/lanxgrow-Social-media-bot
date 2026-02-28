@@ -18,6 +18,7 @@ TELEGRAM_TOKEN   = "8733495512:AAHHQLMqJdgNpmWTQoofyP9JDn3Os9be1RM"
 TELEGRAM_CHAT_ID = "7883707638"
 FAL_API_KEY      = "670e2096-81b4-4d42-83f7-a05d09356c16:1b0e490a80f48e56a39b1fbefae614e8"
 JSON2VIDEO_KEY   = "PdatZmLXSTdgeUQFfc9GYfuAsoGiDYO8cB2tG4Ax"
+RENDER_URL       = "https://lanxgrow-social-media-bot.onrender.com/"
 
 os.environ["FAL_KEY"] = FAL_API_KEY
 os.environ["FAL_API_KEY"] = FAL_API_KEY
@@ -34,6 +35,16 @@ def home():
 def run_web():
     port = int(os.environ.get("PORT", "10000"))
     app.run(host="0.0.0.0", port=port, use_reloader=False, threaded=True)
+
+# ── Keep Alive (prevents Render from sleeping) ────────────────
+def keep_alive():
+    while True:
+        try:
+            requests.get(RENDER_URL, timeout=10)
+            print("✅ Keep-alive ping sent")
+        except Exception as e:
+            print(f"Keep-alive error: {e}")
+        time.sleep(240)  # ping every 4 minutes
 
 # ── Global State ──────────────────────────────────────────────
 LAST_POST = None
@@ -147,6 +158,7 @@ Make it sharp, emotional, real. Not generic.
         quality = quality_check(draft)
         print(f"Attempt {attempt}:\n{quality}\n")
 
+        # ✅ FIXED: was \\n before (bug)
         try:
             score_line = [l for l in quality.split('\n') if 'SCORE:' in l][0]
             score = float(score_line.split(':')[1].strip().split('/')[0])
@@ -174,12 +186,13 @@ Make it sharp, emotional, real. Not generic.
 def generate_image(prompt):
     try:
         response = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key={GEMINI_API_KEY}",
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={GEMINI_API_KEY}",
             headers={"Content-Type": "application/json"},
             json={
                 "contents": [{
                     "parts": [{"text": f"Professional Instagram thumbnail for English learning in India: {prompt}. Vibrant, modern, 16:9."}]
-                }]
+                }],
+                "generationConfig": {"responseModalities": ["image", "text"]}
             },
             timeout=45
         )
@@ -189,7 +202,7 @@ def generate_image(prompt):
             for part in parts:
                 if "inline_data" in part:
                     image_bytes = base64.b64decode(part["inline_data"]["data"])
-                    return image_bytes  # raw bytes
+                    return image_bytes
         return None
     except Exception as e:
         print(f"Gemini image error: {e}")
@@ -262,13 +275,11 @@ def save_analytics(data):
 # ── Morning Report ────────────────────────────────────────────
 def morning_report():
     today = datetime.now().strftime("%Y-%m-%d")
-
     topics = [
         "English speaking confidence for Indian students",
         "Why Tier 2/3 city students struggle in interviews",
         "How LanXgrow transforms communication skills in 7 days"
     ]
-
     topic = random.choice(topics)
 
     send_telegram(f"🌅 *Good Morning Apoorva!*\n\n📅 Date: {today}\n🔍 Today's Topic: _{topic}_\n\n⏳ Generating your content package...")
@@ -279,49 +290,21 @@ def morning_report():
     image_prompt = ask_groq(f"Describe a powerful visual image for this post (one line): {post[:200]}")
     image_data = generate_image(image_prompt)
 
-    send_telegram(f"""
-📦 *Today's Content Package*
-
-📊 *Quality Score: {score}/10*
-✅ *POST (Ready to Copy):*
-
-{post}
-""")
+    send_telegram(f"📦 *Today's Content Package*\n\n📊 *Quality Score: {score}/10*\n✅ *POST (Ready to Copy):*\n\n{post}")
 
     if image_data:
         send_image_telegram(image_data, "🖼 Image for today's post")
     else:
         send_telegram("⚠️ Image generation failed. Try /image manually.")
 
-    send_telegram(f"""
-📋 *Quality Report:*
-{quality_report}
-
-👉 *Your Actions:*
-1. Copy post above → Instagram + LinkedIn
-2. `/like` if post is good
-3. `/dislike` if post needs rework
-4. `/video [topic]` to generate a video
-""")
+    send_telegram(f"📋 *Quality Report:*\n{quality_report}\n\n👉 *Your Actions:*\n1. Copy post → Instagram + LinkedIn\n2. `/like` if post is good\n3. `/dislike` if post needs rework\n4. `/video [topic]` to generate a video")
 
 # ── Handle Commands ───────────────────────────────────────────
 def handle_message(text):
     text_lower = text.strip().lower()
 
     if text_lower in ["/start", "/help"]:
-        send_telegram("""
-👋 *LanXgrow AI Agent*
-
-Commands:
-`/morning` — Get today's content package
-`/post [topic]` — Generate post on custom topic
-`/image [prompt]` — Generate image
-`/video [prompt]` — Generate 15s video
-`/like` — Mark last post as LIKED ✅
-`/dislike` — Mark last post as DISLIKED ⚠️
-`/analytics` — See learning report
-`/help` — All commands
-""")
+        send_telegram("👋 *LanXgrow AI Agent*\n\nCommands:\n`/morning` — Get today's content package\n`/post [topic]` — Generate post on custom topic\n`/image [prompt]` — Generate image\n`/video [prompt]` — Generate 15s video\n`/like` — Mark last post as LIKED ✅\n`/dislike` — Mark last post as DISLIKED ⚠️\n`/analytics` — See learning report\n`/help` — All commands")
 
     elif text_lower == "/morning":
         morning_report()
@@ -441,4 +424,8 @@ if __name__ == "__main__":
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
     time.sleep(1)
+
+    ping_thread = threading.Thread(target=keep_alive, daemon=True)
+    ping_thread.start()
+
     run_web()
