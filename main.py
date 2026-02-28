@@ -1,3 +1,28 @@
+# TOP में import में add करो:
+from flask import Flask, request
+
+# run_bot() को replace करो:
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    update = request.get_json()
+    if "message" in update:
+        chat_id = str(update["message"]["chat"]["id"])
+        if chat_id == TELEGRAM_CHAT_ID:
+            msg = update["message"].get("text", "")
+            handle_message(msg)
+    return "OK", 200
+
+def setup_webhook():
+    webhook_url = f"{RENDER_URL.rstrip('/')}/webhook"
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook"
+    requests.post(url, json={"url": webhook_url})
+
+def run_bot():
+    setup_webhook()
+    send_telegram("🟢 Bot live!")
+    while True:
+        time.sleep(300)
+        check_api_expiry()
 import os
 import json
 import time
