@@ -1,28 +1,312 @@
-# TOP में import में add करो:
-from flask import Flask, request
+import os
+import json
+import time
+import base64
+import random
+import requests
+import threading
+from flask import Flask, request  # ✅ ADDED request
+from datetime import datetime, date
+from groq import Groq
 
-# run_bot() को replace करो:
+# =========================
+# ENV VARIABLES
+# =========================
+GEMINI_API_KEY   = os.environ.get("GEMINI_API_KEY")
+GROQ_API_KEY     = os.environ.get("GROQ_API_KEY")
+TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+JSON2VIDEO_KEY   = os.environ.get("JSON2VIDEO_KEY", "")
+RENDER_URL       = os.environ.get("RENDER_URL", "https://lanxgrow-social-media-bot.onrender.com/")
+GOOGLE_SHEETS_WEBAPP_URL = os.environ.get(
+    "GOOGLE_SHEETS_WEBAPP_URL",
+    "https://script.google.com/macros/s/AKfycbyIvOVATP3hctm0ZoGuG05hlR4wl-rvT4TRz0NQyw34ZhwQgmW8TdB1W9vPJNOTSUIGLg/exec"
+)
+GROQ_EXPIRY_DATE = os.environ.get("GROQ_EXPIRY_DATE", "2026-03-30")
+
+groq_client = Groq(api_key=GROQ_API_KEY)
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "OK", 200
+
+# ✅ NEW WEBHOOK ROUTE
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    update = request.get_json()
-    if "message" in update:
-        chat_id = str(update["message"]["chat"]["id"])
-        if chat_id == TELEGRAM_CHAT_ID:
-            msg = update["message"].get("text", "")
-            handle_message(msg)
-    return "OK", 200
+    try:
+        update = request.get_json()
+        if "message" in update:
+            chat_id = str(update["message"]["chat"]["id"])
+            if chat_id == TELEGRAM_CHAT_ID:
+                msg = update["message"].get("text", "")
+                if msg:
+                    handle_message(msg)
+        return "OK", 200
+    except Exception as e:
+        print("Webhook error:", e)
+        return "Error", 500
 
 def setup_webhook():
     webhook_url = f"{RENDER_URL.rstrip('/')}/webhook"
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook"
-    requests.post(url, json={"url": webhook_url})
+    r = requests.post(url, json={"url": webhook_url}, timeout=10)
+    print("Webhook setup:", r.json())
 
+# =========================
+# SHEETS FUNCTIONS
+# =========================
+def sheets_post(payload):
+    try:
+        r = requests.post(GOOGLE_SHEETS_WEBAPP_URL, json=payload, timeout=20)
+        return r.json() if r.status_code == 200 else {"status": "error", "http": r.status_code}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+def log_post_to_sheet(post_data):
+    resp = sheets_post({"action": "log_post", **post_data})
+    print("Sheets log_post:", resp)
+
+def update_rating_in_sheet(topic, rating):
+    resp = sheets_post({"action": "update_rating", "topic": topic, "rating": rating})
+    print("Sheets update_rating:", resp)
+
+def log_feedback_to_sheet(feedback_text):
+    resp = sheets_post({
+        "action": "log_feedback",
+        "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "feedback_text": feedback_text
+    })
+    print("Sheets log_feedback:", resp)
+
+def read_feedback_for_learning():
+    resp = sheets_post({"action": "read_feedback"})
+    return resp.get("feedback", "") if resp.get("status") == "ok" else ""
+
+def check_api_expiry():
+    try:
+        today = date.today()
+        expiry = date.fromisoformat(GROQ_EXPIRY_DATE)
+        days_left = (expiry - today).days
+        sheets_post({
+            "action": "update_expiry",
+            "api_name": "Groq API", 
+            "days_left": days_left,
+            "last_reminder": today.strftime("%Y-%m-%d")
+        })
+    except:
+        pass
+
+# =========================
+# TELEGRAM
+# =========================
+def send_telegram(text):
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}
+        requests.post(url, json=payload, timeout=15)
+    except Exception as e:
+        print(f"Telegram error: {e}")
+
+def send_image_telegram(image_bytes, caption=""):
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+        files = {"photo": ("image.jpg", image_bytes, "image/jpeg")}
+        data = {"chat_id": TELEGRAM_CHAT_ID, "caption": caption}
+        requests.post(url, files=files, data=data, timeout=30)
+    except Exception as e:
+        print(f"Send image error: {e}")
+
+# =========================
+# GROQ CONTENT
+# =========================
+LAST_POST = None
+
+BRAND_MEMORY = {
+    "company": "LanXgrow",
+    "product": "English communication skills for students and professionals",
+    "audience": "Indian parents of Grade 5-10, school decision-makers, Tier 2/3 city career aspirants",
+    "tone": "Sharp, authoritative, emotionally resonant",
+    "best_hooks": ["3 mistakes", "before/after", "shocking stat", "question"],
+    "cta": "DM SPEAK for free trial"
+}
+
+SYSTEM_PROMPT = f"""
+You are LanXgrow's AI Social Media Manager.
+Company: {BRAND_MEMORY['company']}
+Product: {BRAND_MEMORY['product']}
+Tone: {BRAND_MEMORY['tone']}
+CTA: {BRAND_MEMORY['cta']}
+Always be sharp, data-driven, emotionally resonant.
+"""
+
+def ask_groq(prompt):
+    try:
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"Error: {e}"
+
+def quality_check(post_text):
+    score_prompt = f"Score this post 1-10:\n\n{post_text}\n\nReply: SCORE: X.X/10"
+    q = ask_groq(score_prompt)
+    try:
+        score_line = [l for l in q.split('\n') if 'SCORE:' in l][0]
+        return float(score_line.split(':', 1)[1].strip().split('/')[0])
+    except:
+        return 0
+
+def research_topic(topic):
+    research = ask_groq(f"Research {topic} for Instagram post. Reply: SEO_KEYWORDS: ... HOOK_TYPE: ...")
+    return {"SEO_KEYWORDS": "english speaking india", "HOOK_TYPE": "Question"}
+
+def generate_best_post(topic, command_used="/post"):
+    global LAST_POST
+    send_telegram(f"🔍 Researching: *{topic}*")
+    
+    research = research_topic(topic)
+    feedback = read_feedback_for_learning()
+    
+    best_post = ask_groq(f"Write viral Instagram post about: {topic}\nSEO: {research.get('SEO_KEYWORDS')}\nInclude CTA: {BRAND_MEMORY['cta']}")
+    best_score = quality_check(best_post)
+    
+    image_prompt = ask_groq(f"Image prompt for: {best_post[:200]}")
+    video_prompt = ask_groq(f"15-sec video prompt for: {best_post[:200]}")
+    
+    LAST_POST = {
+        "topic": topic, "post": best_post, "score": best_score,
+        "image_prompt": image_prompt, "video_prompt": video_prompt,
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "command_used": command_used
+    }
+    
+    log_post_to_sheet({
+        "timestamp": LAST_POST["timestamp"], "topic": topic, "post_content": best_post,
+        "quality_score": best_score, "rating": "UNRATED", "hook_type_used": research.get("HOOK_TYPE", ""),
+        "image_prompt": image_prompt, "video_prompt": video_prompt, "seo_keywords": research.get("SEO_KEYWORDS", ""),
+        "image_url": "", "video_url": "", "command_used": command_used
+    })
+    
+    return best_post, best_score, ""
+
+# =========================
+# GEMINI IMAGE
+# =========================
+def generate_image(prompt):
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={GEMINI_API_KEY}"
+        payload = {
+            "contents": [{"parts": [{"text": f"Instagram thumbnail 16:9: {prompt}"}]}],
+            "generationConfig": {"responseModalities": ["image", "text"]}
+        }
+        r = requests.post(url, json=payload, timeout=45)
+        j = r.json()
+        if "candidates" in j and j["candidates"]:
+            parts = j["candidates"][0]["content"]["parts"]
+            for p in parts:
+                if "inline_data" in p:
+                    return base64.b64decode(p["inline_data"]["data"])
+        return None
+    except:
+        return None
+
+# =========================
+# COMMANDS
+# =========================
+def handle_message(msg):
+    t = msg.strip().lower()
+    
+    if t in ["/start", "/help"]:
+        send_telegram(
+            "🟢 *LanXgrow Bot Commands:*\n\n"
+            "/morning - Daily post\n"
+            "/post <topic> - Generate post\n"
+            "/image <prompt> - Generate image\n"
+            "/like - Rate post LIKE\n"
+            "/dislike - Rate post DISLIKE\n"
+            "/feedback <text> - Give feedback"
+        )
+        return
+    
+    if t == "/morning":
+        morning_report()
+        return
+    
+    if t.startswith("/post"):
+        topic = msg.split(" ", 1)[1] if len(msg.split()) > 1 else "English communication skills India"
+        post, score, _ = generate_best_post(topic)
+        send_telegram(f"📝 *Post (Score: {score}/10)*\n\n{post}")
+        return
+    
+    if t.startswith("/feedback"):
+        fb = msg.split(" ", 1)[1] if len(msg.split()) > 1 else "No feedback text"
+        log_feedback_to_sheet(fb)
+        send_telegram("✅ Feedback saved!")
+        return
+    
+    if t == "/like" and LAST_POST:
+        update_rating_in_sheet(LAST_POST["topic"], "LIKE")
+        send_telegram("👍 LIKE saved!")
+        return
+    
+    if t == "/dislike" and LAST_POST:
+        update_rating_in_sheet(LAST_POST["topic"], "DISLIKE")
+        send_telegram("👎 DISLIKE saved!")
+        return
+    
+    if t.startswith("/image"):
+        prompt = msg.split(" ", 1)[1] if len(msg.split()) > 1 else "Indian student speaking"
+        send_telegram("🎨 Generating image...")
+        img = generate_image(prompt)
+        if img:
+            send_image_telegram(img, f"🖼️ {prompt}")
+        else:
+            send_telegram("❌ Image failed")
+        return
+    
+    send_telegram("Use /help for commands")
+
+def morning_report():
+    topics = [
+        "English speaking confidence for Indian students",
+        "Why Tier 2/3 city students struggle in interviews", 
+        "How to speak fluently without grammar fear"
+    ]
+    topic = random.choice(topics)
+    send_telegram(f"🌅 *Good Morning!*\n\nTopic: _{topic}_")
+    generate_best_post(topic, "/morning")
+
+# =========================
+# MAIN
+# =========================
 def run_bot():
+    print("🤖 Setting up webhook...")
     setup_webhook()
-    send_telegram("🟢 Bot live!")
+    send_telegram("🟢 LanXgrow Bot LIVE! Send /help")
+    
     while True:
         time.sleep(300)
         check_api_expiry()
+
+def keep_alive():
+    while True:
+        try:
+            requests.get(RENDER_URL, timeout=10)
+            print("✅ Keep-alive ping")
+        except:
+            pass
+        time.sleep(240)
+
+if __name__ == "__main__":
+    threading.Thread(target=run_bot, daemon=True).start()
+    threading.Thread(target=keep_alive, daemon=True).start()
+    
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port, debug=False)
+
 import os
 import json
 import time
